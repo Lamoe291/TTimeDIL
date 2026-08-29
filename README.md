@@ -1,38 +1,36 @@
-# SD-LoRA: Scalable Decoupled Low-Rank Adaptation for Class Incremental Learning
+# T-Time: Test-Time Merging for Domain Incremental Learning
 
-Welcome to the official code repository for [SD-LoRA: Scalable Decoupled Low-Rank Adaptation for Class Incremental Learning **(ICLR 2025, Oral)**](https://openreview.net/pdf?id=5U1rlpX68A).
-
-If you find this code useful in your research then please cite  
-```bibtex
-@inproceedings{
-wu2025sdlora,
-title={{SD}-Lo{RA}: Scalable Decoupled Low-Rank Adaptation for Class Incremental Learning},
-author={Yichen Wu and Hongming Piao and Long-Kai Huang and Renzhen Wang and Wanhua Li and Hanspeter Pfister and Deyu Meng and Kede Ma and Ying Wei},
-booktitle={The Thirteenth International Conference on Learning Representations},
-year={2025},
-url={https://openreview.net/forum?id=5U1rlpX68A}
-}
-``` 
+Welcome to the official code repository for T-Time: Test-Time Merging for Domain-Incremental Learning.
 
 ## 👀 Introduction
-![SD-LoRA](imgs/intro.jpg)
+![T-Time](t_time_figure_new_2.png)
 
-- SD-LoRA introduces a decoupled learning strategy for the magnitude and direction of LoRA components to achieve scalable continual learning without rehearsal of huge sample features.
-- It demonstrates a strong stability-plasticity trade-off by converging to overlapping low-loss regions across sequential tasks, supported by empirical and theoretical analysis.
-- SD-LoRA and its two variants enable end-to-end optimization and efficient inference without component selection, achieving state-of-the-art performance on multiple CL benchmarks and foundation models.
+- T-Time is a domain-incremental learning method that learns domain-specific adapters and performs sample-wise parameter composition at inference time, enabling replay-free adaptation without domain identifiers.
+- It uses a distance-aware test-time merging mechanism that interpolates model parameters based on statistical similarity in a frozen feature space, avoiding learned routing networks while remaining interpretable.
+- T-Time achieves state-of-the-art performance among rehearsal-free domain-incremental learning methods for pre-trained models on both remote sensing and general vision datasets under different types of classification tasks.
 
 ## 📜 Results
-![SD-LoRA](imgs/results1.jpg)
-![SD-LoRA](imgs/results2.jpg)
-- To run the experiments, download the datasets to /data/ and execute:
+![T-Time-](main_results.png)
+
+## 📂 Datasets:
+The datasets can be downloaded from the following sources:
+
+[Office-Home](https://www.hemanthdv.org/officeHomeDataset.html)
+ – A dataset with images from 4 domains (Art, Clipart, Product, Real-World) across 65 categories.
+
+ [DomainNet](https://ai.bu.edu/M3SDA/#refs)
+ – A dataset with images from 6 domains (Clipart, Infograph, Painting, Quickdraw, Real, Sketch) across 345 categories.
+
+ [CORe50](https://vlomonaco.github.io/core50/)
+ – A dataset with images from 11 sessions with 50 different categories.
+
+[BigEarthNet](https://bigearth.net/)
+ – A large-scale remote sensing dataset for multi-label land cover classification.
+
+[FLAIR](https://ignf.github.io/FLAIR/FLAIR1/flair_1.html)
+ – A high-resolution aerial image dataset for image segmentation and domain adaptation.
+
+## ▶️ Run:
+To run the experiments create an environment using [requirements.txt](requirements.txt). Configuration files can be found in [exps](exps). Download the datasets to /data/ and execute:
    ```bash
   bash run.sh
-- For your convenience, we have provided the running logs in the log file, where you can find detailed performance results for all streaming tasks.
-
-
-
-## 🙏 Acknowledgement
-This repo is built upon the following projects:
-
-* [LoRA-ViT](https://github.com/JamesQFreeman/LoRA-ViT)
-* [PILOT](https://github.com/sun-hailong/LAMDA-PILOT)
