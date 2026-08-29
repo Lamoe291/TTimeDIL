@@ -1,11 +1,13 @@
 import copy
 import logging
 import numpy as np
+import time
 import torch
 from torch import nn
 from torch.utils.data import DataLoader
 from utils.toolkit import tensor2numpy, accuracy
 from scipy.spatial.distance import cdist
+from sklearn.metrics import average_precision_score
 
 EPSILON = 1e-8
 batch_size = 64
@@ -27,6 +29,10 @@ class BaseLearner(object):
         self._multiple_gpus = args["device"]
         print('!!!!!!! multiple_gpus', self._multiple_gpus)
         self.args = args
+        self.total_training_time=0
+        
+        
+        self.total_testing_time=0
 
     @property
     def exemplar_size(self):
@@ -113,11 +119,30 @@ class BaseLearner(object):
 
         return ret
 
+    def _evaluate_ML(self, y_pred, y_true):
+        ret = {}
+        #grouped = accuracy(y_pred.T[0], y_true, self._known_classes, self.args["increment"])
+        #ret["grouped"] = grouped
+        ret["top1"] = average_precision_score(y_score=y_pred,y_true=y_true, average='micro')
+        ret['grouped'] = None
+        ret["top{}".format(self.topk)] = None
+        #ret["top{}".format(self.topk)] = np.around(
+        #    (y_pred.T == np.tile(y_true, (self.topk, 1))).sum() * 100 / len(y_true),
+        #    decimals=2,
+        #)
+
+        return ret
+
     def eval_task(self):
-        y_pred, y_true = self._eval_cnn(self.test_loader)
+        if not self.args.get('multi-label', False):
+            y_pred, y_true = self._eval_cnn(self.test_loader)
+            cnn_accy = self._evaluate(y_pred, y_true)
+        else:
+            y_pred, y_true = self._eval_cnn_ML(self.test_loader)
+            cnn_accy = self._evaluate_ML(y_pred, y_true)
         # print('y_pred', y_pred)
         # print('y_true', y_true)
-        cnn_accy = self._evaluate(y_pred, y_true)
+        
         # print('cnn_accy', cnn_accy)
 
         if hasattr(self, "_class_means"):
@@ -143,33 +168,152 @@ class BaseLearner(object):
     def _compute_accuracy(self, model, loader):
         model.eval()
         correct, total = 0, 0
-        for i, (_, inputs, targets) in enumerate(loader):
+        for i, batch in enumerate(loader):
+            #print(i)
+            #print(batch.shape)
+            (_, inputs, targets) = batch[0], batch[1], batch[2]
             inputs = inputs.to(self._device)
             with torch.no_grad():
                 outputs = model(inputs)["logits"]
                 # logits,_ = model(inputs)
                 # outputs = logits['logits']
             predicts = torch.max(outputs, dim=1)[1]
+            if self.args.get('multi_head',False):
+                        predicts = predicts % int(self.args["nb_classes"]/self.args["nb_tasks"])#(self._total_classes - self._known_classes)
             correct += (predicts.cpu() == targets).sum()
             total += len(targets)
 
         return np.around(tensor2numpy(correct) * 100 / total, decimals=2)
+    
+    def _compute_mAP(self, model, loader):
+        model.eval()
+        correct, total = 0, 0
+        all_preds = []
+        all_targets = []
+
+        if self.args.get('multi_head',False) and (self.args["model_name"] in ["l2p","dualprompt","coda_prompt"]):
+            true_class_number = int(self.args["nb_classes"]/self.args["nb_tasks"])
+        else:
+            true_class_number = self.args["nb_classes"]
+
+        for i, batch in enumerate(loader):
+            if self.args['dataset'] != 'bigearthnet':
+                (_, inputs, targets) = batch[0], batch[1], batch[2]
+            else:
+                (inputs, targets, _) = batch[0], batch[1], batch[2]
+            inputs = inputs.to(self._device)
+            targets = targets.to(torch.float32)
+            with torch.no_grad():
+                if self.args['model_name']!='coda_prompt':
+                    outputs = model(inputs)["logits"][:, :self._total_classes]
+                else:
+                    outputs = model(inputs)[:, :self._total_classes]
+                #print(outputs.shape)
+                if self.args.get('multi_head',False):
+                        B, CT = outputs.shape
+                        C = true_class_number
+                        T = CT // C
+                        #print('multi_head')
+
+                        outputs = outputs.view(B, T, C)      # [B, T, C]
+                        outputs = outputs.max(dim=1).values
+                        #outputs = outputs.mean(dim=1)#.values
+                # logits,_ = model(inputs)
+                # outputs = logits['logits']
+                preds = torch.sigmoid(outputs) #> 0.
+                #print("pred shape",preds.shape)
+                #print("target shape", targets.shape)
+
+            #print('prediction:', preds)
+            #print('targets: ', targets)
+            all_preds.append(preds.cpu())
+            all_targets.append(targets.cpu())
+            #predicts = torch.max(outputs, dim=1)[1]
+            #correct += (predicts.cpu() == targets).sum()
+            #total += len(targets)
+        preds = torch.cat([o for o in all_preds], dim=0)
+        targets = torch.cat([o for o in all_targets], dim=0)
+        #print(preds)
+        #print(targets)
+        ap_macro = average_precision_score(targets,preds,average='macro')
+        ap_micro = average_precision_score(targets,preds,average='micro')
+
+        return ap_micro, ap_macro #np.around(tensor2numpy(correct) * 100 / total, decimals=2)
 
     def _eval_cnn(self, loader):
         self._network.eval() 
         y_pred, y_true = [], []
+
+        elapsed = 0
         for _, (_, inputs, targets) in enumerate(loader):
             inputs = inputs.to(self._device)
             with torch.no_grad():
                 # outputs = self._network.forward(inputs, eval=True)['logits']
                 # print('outputs', outputs['logits'])
+                torch.cuda.synchronize()
+                t0 = time.time()
                 outputs =  self._network.forward(inputs)['logits']
+                torch.cuda.synchronize()
+                elapsed += time.time() - t0
+                
                 # outputs = self._network(inputs)['logits']
             predicts = torch.topk(outputs, k=self.topk, dim=1, largest=True, sorted=True)[1]  # [bs, topk]
+            if self.args.get('multi_head',False):
+                        predicts = predicts % int(self.args["nb_classes"]/self.args["nb_tasks"])
             y_pred.append(predicts.cpu().numpy())
             y_true.append(targets.cpu().numpy())
             # print('y_pred', np.concatenate(y_pred))
             # print('y_true', y_true)
+        self.total_testing_time += elapsed
+        return np.concatenate(y_pred), np.concatenate(y_true)  # [N, topk]
+
+
+    def _eval_cnn_ML(self, loader):
+        self._network.eval() 
+        y_pred, y_true = [], []
+        if self.args.get('multi_head',False) and (self.args["model_name"] in ["l2p","dualprompt","coda_prompt"]):
+            true_class_number = int(self.args["nb_classes"]/self.args["nb_tasks"])
+        else:
+            true_class_number = self.args["nb_classes"]
+
+        elapsed = 0
+        for _, batch in enumerate(loader):
+            if self.args['dataset'] != 'bigearthnet':
+                (_, inputs, targets) = batch[0], batch[1], batch[2]
+            else:
+                (inputs, targets, _) = batch[0], batch[1], batch[2]
+            inputs = inputs.to(self._device)
+            with torch.no_grad():
+                # outputs = self._network.forward(inputs, eval=True)['logits']
+                # print('outputs', outputs['logits'])
+                torch.cuda.synchronize()
+                t0 = time.time()
+                if self.args['model_name']!='coda_prompt':
+                    outputs = self._network(inputs)["logits"][:, :self._total_classes]
+                else:
+                    outputs = self._network(inputs)[:, :self._total_classes]
+                if self.args.get('multi_head',False):
+                        B, CT = outputs.shape
+                        C = true_class_number#self._total_classes - self._known_classes
+                        T = CT // C
+
+                        outputs = outputs.view(B, T, C)      # [B, T, C]
+                        #outputs = outputs.mean(dim=1)#.values
+                        outputs = outputs.max(dim=1).values
+                torch.cuda.synchronize()
+                elapsed += time.time() - t0
+                # outputs = self._network(inputs)['logits']
+                preds = torch.sigmoid(outputs)# > 0.5
+                #print(preds)
+
+            y_pred.append(preds.cpu().numpy())
+            y_true.append(targets.cpu().numpy())
+            #y_pred.append(predicts.cpu().numpy())
+            #y_true.append(targets.cpu().numpy())
+            # print('y_pred', np.concatenate(y_pred))
+            # print('y_true', y_true)
+        #print(len(y_pred))
+        self.total_testing_time += elapsed
         return np.concatenate(y_pred), np.concatenate(y_true)  # [N, topk]
 
     def _eval_nme(self, loader, class_means):

@@ -335,7 +335,7 @@ class VisionTransformer(nn.Module):
             class_token=True, no_embed_class=False, fc_norm=None, drop_rate=0., attn_drop_rate=0., drop_path_rate=0.,
             weight_init='', embed_layer=PatchEmbed, norm_layer=None, act_layer=None, block_fn=Block,
             prompt_length=None, embedding_key='cls', prompt_init='uniform', prompt_pool=False, prompt_key=False, pool_size=None,
-            top_k=None, batchwise_prompt=False, prompt_key_init='uniform', head_type='token', use_prompt_mask=False,):
+            top_k=None, batchwise_prompt=False, prompt_key_init='uniform', head_type='token', use_prompt_mask=False,pretrained_custom_load=None,):
         """
         Args:
             img_size (int, tuple): input image size
@@ -720,7 +720,7 @@ def _create_vision_transformer(variant, pretrained=False, **kwargs):
         VisionTransformer, variant, pretrained,
         pretrained_cfg=pretrained_cfg,
         pretrained_filter_fn=checkpoint_filter_fn,
-        pretrained_custom_load='npz' in pretrained_cfg['url'],
+        pretrained_custom_load='npz' in pretrained_cfg.url, 
         **kwargs)
     return model
 
